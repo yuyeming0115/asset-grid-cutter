@@ -9,3 +9,4 @@ build/
 *.egg-info/
 *_slices/
 example-output/
+web-work/

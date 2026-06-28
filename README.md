@@ -2,7 +2,7 @@
 
 Asset Grid Cutter is a small local tool for slicing AI-generated asset sheets into individual PNG files.
 
-它适合处理这种“很多素材排在浅灰网格里”的合集图：可以按真实网格线切割，也可以按固定行列等分切割。日常使用可以打开 GUI 点按钮，大批量处理可以用 CLI。
+它适合处理这种“很多素材排在浅灰网格里”的合集图：可以按真实网格线切割，也可以按固定行列等分切割。日常使用推荐打开本地浏览器 GUI，拖入图片后自动分析并显示预览；大批量处理可以用 CLI。
 
 ## Features
 
@@ -12,7 +12,8 @@ Asset Grid Cutter is a small local tool for slicing AI-generated asset sheets in
 - Trim blank background around each asset.
 - Optionally convert light background to transparent alpha.
 - Generate a preview contact sheet.
-- Show the latest preview directly in the GUI.
+- Drag an image into the local web GUI for automatic grid analysis.
+- Show both analysis preview and output preview.
 - Open the output folder from the GUI after processing.
 - Write a `manifest.json` for every processed sheet.
 - Provide both GUI and command-line workflows.
@@ -25,18 +26,24 @@ Install dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
-Open the GUI:
+Open the recommended web GUI:
 
 ```bash
-python3 asset_grid_cutter_gui.py
+python3 asset_grid_cutter_web.py
 ```
 
-The GUI lets you choose an input file/folder, adjust row and column counts, run the cut, watch progress, inspect the generated preview, open the full preview image, and open the output folder.
+The web GUI opens in your browser. Drag an asset sheet into the drop zone and it will automatically analyze the grid, show a grid preview, then let you output PNG slices with a contact-sheet preview.
 
 On macOS, you can also double-click:
 
 ```text
 Asset Grid Cutter.command
+```
+
+The older Tk GUI is still available as a fallback:
+
+```bash
+python3 asset_grid_cutter_gui.py
 ```
 
 ## CLI Usage
@@ -85,8 +92,8 @@ For each input sheet, the tool writes:
 
 ## Recommended Workflow
 
-1. Start with GUI for a few sample images.
-2. Check the preview image.
+1. Start with the web GUI for a few sample images.
+2. Drag an image in and check the automatic grid analysis preview.
 3. If the result looks good, use the same settings in CLI for batch processing.
 4. Use `--transparent-bg` only after testing, because shadows and highlights may need a non-transparent background.
 
