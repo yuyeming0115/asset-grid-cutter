@@ -329,11 +329,11 @@ PAGE = r"""<!doctype html>
     .drop {
       border: 2px dashed #98a2b3;
       border-radius: 8px;
-      min-height: 190px;
+      min-height: 112px;
       display: grid;
       place-items: center;
       text-align: center;
-      padding: 18px;
+      padding: 14px;
       background: #f9fafb;
       cursor: pointer;
     }
@@ -389,25 +389,25 @@ PAGE = r"""<!doctype html>
       gap: 10px;
       margin-top: 14px;
     }
-    .meta {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .metric {
+    .summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
       background: #f9fafb;
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 10px;
+      padding: 10px 12px;
+      margin-bottom: 14px;
     }
-    .metric span {
-      display: block;
+    .summary-text {
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }
+    .summary-sub {
       color: var(--muted);
       font-size: 12px;
-      margin-bottom: 4px;
     }
-    .metric strong { font-size: 18px; }
     .preview {
       min-height: 560px;
       display: grid;
@@ -453,7 +453,7 @@ PAGE = r"""<!doctype html>
     }
     @media (max-width: 880px) {
       .layout { grid-template-columns: 1fr; }
-      .meta { grid-template-columns: 1fr 1fr; }
+      .summary { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -507,11 +507,11 @@ PAGE = r"""<!doctype html>
       <div class="log" id="log">Ready.</div>
     </section>
     <section class="panel preview">
-      <div class="meta">
-        <div class="metric"><span data-i18n="metric.rows">Rows</span><strong id="mRows">-</strong></div>
-        <div class="metric"><span data-i18n="metric.cols">Columns</span><strong id="mCols">-</strong></div>
-        <div class="metric"><span data-i18n="metric.cells">Cells</span><strong id="mCells">-</strong></div>
-        <div class="metric"><span data-i18n="metric.source">Source</span><strong id="mSource">-</strong></div>
+      <div class="summary">
+        <div>
+          <div class="summary-text" id="summaryText" data-i18n="summary.empty">等待图片分析</div>
+          <div class="summary-sub" id="summarySub" data-i18n="summary.hint">拖入图片后这里会显示网格结果</div>
+        </div>
       </div>
       <div id="previewWrap" class="empty" data-i18n="preview.empty">Analysis preview and output preview will appear here.</div>
     </section>
@@ -520,7 +520,8 @@ PAGE = r"""<!doctype html>
 <script>
 let currentFile = null;
 let outputFolder = "";
-let currentLang = localStorage.getItem("assetGridCutterLang") || "en";
+let currentLang = localStorage.getItem("assetGridCutterLang") || "zh";
+let latestSummary = null;
 const $ = (id) => document.getElementById(id);
 const drop = $("drop");
 const fileInput = $("file");
@@ -542,10 +543,10 @@ const I18N = {
     "button.analyze": "Analyze",
     "button.cut": "Cut Assets",
     "button.open": "Open Output",
-    "metric.rows": "Rows",
-    "metric.cols": "Columns",
-    "metric.cells": "Cells",
-    "metric.source": "Source",
+    "summary.empty": "Waiting for image analysis",
+    "summary.hint": "Grid results will appear here after dropping an image",
+    "summary.result": "{count} cells · {cols} columns x {rows} rows · {source}",
+    "summary.output": "Output complete · {count} PNGs · {cols} columns x {rows} rows",
     "preview.empty": "Analysis preview and output preview will appear here.",
     "log.ready": "Ready.",
     "log.upload": "Uploading and analyzing {name} ...",
@@ -575,10 +576,10 @@ const I18N = {
     "button.analyze": "重新分析",
     "button.cut": "切割素材",
     "button.open": "打开输出",
-    "metric.rows": "行数",
-    "metric.cols": "列数",
-    "metric.cells": "格子数",
-    "metric.source": "来源",
+    "summary.empty": "等待图片分析",
+    "summary.hint": "拖入图片后这里会显示网格结果",
+    "summary.result": "{count} 个格子 · {cols} 列 x {rows} 行 · {source}",
+    "summary.output": "输出完成 · {count} 张 PNG · {cols} 列 x {rows} 行",
     "preview.empty": "分析预览和输出预览会显示在这里。",
     "log.ready": "就绪。",
     "log.upload": "正在上传并分析 {name} ...",
@@ -610,6 +611,7 @@ function applyLanguage() {
     el.textContent = t(el.dataset.i18n);
   });
   $("langBtn").textContent = t("language");
+  renderSummary();
   if ($("log").textContent === "Ready." || $("log").textContent === "就绪。") {
     log(t("log.ready"));
   }
@@ -634,12 +636,23 @@ function showPreview(url, label) {
 }
 
 function updateMetrics(data) {
-  $("mRows").textContent = data.rows ?? "-";
-  $("mCols").textContent = data.cols ?? "-";
-  $("mCells").textContent = data.count ?? "-";
-  $("mSource").textContent = data.source ?? "-";
+  latestSummary = { ...data, mode: data.mode || "analysis" };
+  renderSummary();
   if (data.rows) $("rows").value = data.rows;
   if (data.cols) $("cols").value = data.cols;
+}
+
+function renderSummary() {
+  if (!latestSummary) {
+    $("summaryText").textContent = t("summary.empty");
+    $("summarySub").textContent = t("summary.hint");
+    return;
+  }
+  const key = latestSummary.mode === "output" ? "summary.output" : "summary.result";
+  $("summaryText").textContent = t(key, latestSummary);
+  $("summarySub").textContent = latestSummary.image_size
+    ? `${latestSummary.image_size[0]} x ${latestSummary.image_size[1]}`
+    : latestSummary.output_dir || "";
 }
 
 async function analyze() {
@@ -677,7 +690,7 @@ async function cut() {
     return;
   }
   outputFolder = data.output_dir;
-  updateMetrics(data);
+  updateMetrics({ ...data, mode: "output" });
   if (data.preview_url) showPreview(data.preview_url, "output preview");
   $("openBtn").disabled = false;
   status(t("status.output", data));
@@ -693,6 +706,8 @@ async function openOutput() {
 function setFile(file) {
   currentFile = file;
   outputFolder = "";
+  latestSummary = null;
+  renderSummary();
   $("filePath").textContent = file.name + " (" + Math.round(file.size / 1024) + " KB)";
   $("analyzeBtn").disabled = false;
   $("cutBtn").disabled = true;
