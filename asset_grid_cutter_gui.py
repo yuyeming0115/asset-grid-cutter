@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from asset_grid_cutter import CutSettings, cut_image, iter_images
+from asset_grid_cutter import CutSettings, cut_image, ensure_output_dir, iter_images
 
 
 class AssetGridCutterApp(tk.Tk):
@@ -25,6 +25,7 @@ class AssetGridCutterApp(tk.Tk):
         self.log_queue: queue.Queue[object] = queue.Queue()
         self.worker: threading.Thread | None = None
         self.last_output_dir: Path | None = None
+        self.last_preview_path: Path | None = None
         self.preview_photo: ImageTk.PhotoImage | None = None
 
         self.input_var = tk.StringVar()
@@ -40,6 +41,8 @@ class AssetGridCutterApp(tk.Tk):
         self.transparent_tolerance_var = tk.IntVar(value=8)
         self.transparent_softness_var = tk.IntVar(value=24)
         self.preview_var = tk.BooleanVar(value=True)
+        self.status_var = tk.StringVar(value="Ready")
+        self.progress_var = tk.DoubleVar(value=0)
 
         self._build_ui()
         self.after(100, self._drain_log_queue)
@@ -103,10 +106,30 @@ class AssetGridCutterApp(tk.Tk):
             state=tk.DISABLED,
         )
         self.open_output_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
-        ttk.Button(action_bar, text="Clear Log", command=self.clear_log).grid(row=0, column=3, sticky="e", padx=(8, 0))
+        self.open_preview_button = ttk.Button(
+            action_bar,
+            text="Open Preview",
+            command=self.open_preview,
+            state=tk.DISABLED,
+        )
+        self.open_preview_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
+        ttk.Button(action_bar, text="Clear Log", command=self.clear_log).grid(row=0, column=4, sticky="e", padx=(8, 0))
+
+        status_bar = ttk.Frame(root)
+        status_bar.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 8))
+        status_bar.columnconfigure(0, weight=1)
+        ttk.Label(status_bar, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
+        self.progress_bar = ttk.Progressbar(
+            status_bar,
+            variable=self.progress_var,
+            maximum=100,
+            mode="determinate",
+            length=220,
+        )
+        self.progress_bar.grid(row=0, column=1, sticky="e")
 
         preview_frame = ttk.LabelFrame(root, text="Preview", padding=8)
-        preview_frame.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        preview_frame.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
         preview_frame.rowconfigure(0, weight=1)
         preview_frame.columnconfigure(0, weight=1)
 
@@ -118,9 +141,9 @@ class AssetGridCutterApp(tk.Tk):
         self.preview_label.grid(row=0, column=0, sticky="nsew")
 
         log_frame = ttk.LabelFrame(root, text="Log", padding=8)
-        log_frame.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
-        root.rowconfigure(6, weight=2)
-        root.rowconfigure(7, weight=1)
+        log_frame.grid(row=8, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        root.rowconfigure(7, weight=2)
+        root.rowconfigure(8, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
@@ -180,6 +203,11 @@ class AssetGridCutterApp(tk.Tk):
 
         self.run_button.configure(state=tk.DISABLED)
         self.open_output_button.configure(state=tk.DISABLED)
+        self.open_preview_button.configure(state=tk.DISABLED)
+        self.last_output_dir = None
+        self.last_preview_path = None
+        self.progress_var.set(0)
+        self.status_var.set("Running...")
         self.preview_photo = None
         self.preview_label.configure(image="", text="A preview contact sheet will appear here after cutting.")
         self.log(f"Starting: {input_path}")
@@ -203,8 +231,10 @@ class AssetGridCutterApp(tk.Tk):
                 raise ValueError(f"No supported images found in {input_path}")
 
             multiple_inputs = len(images) > 1
-            for image_path in images:
-                out_dir = self._output_dir(image_path, output_path, multiple_inputs)
+            total = len(images)
+            self.log_queue.put(("status", f"Processing 0/{total}"))
+            for index, image_path in enumerate(images, start=1):
+                out_dir = ensure_output_dir(image_path, output_path, multiple_inputs)
                 manifest = cut_image(image_path, out_dir, settings)
                 grid = manifest["grid"]
                 self.log_queue.put(
@@ -214,17 +244,12 @@ class AssetGridCutterApp(tk.Tk):
                 self.log_queue.put(("output_dir", out_dir))
                 if manifest.get("preview"):
                     self.log_queue.put(("preview", out_dir / str(manifest["preview"])))
+                self.log_queue.put(("progress", index, total))
             self.log_queue.put("DONE")
         except Exception as exc:
             self.log_queue.put(f"ERROR {exc}")
         finally:
             self.log_queue.put("__ENABLE_RUN__")
-
-    @staticmethod
-    def _output_dir(image_path: Path, output_path: Path | None, multiple_inputs: bool) -> Path:
-        if output_path:
-            return output_path / image_path.stem if multiple_inputs else output_path
-        return image_path.with_name(f"{image_path.stem}_slices")
 
     def log(self, message: str) -> None:
         self.log_text.insert(tk.END, f"{message}\n")
@@ -241,10 +266,20 @@ class AssetGridCutterApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Open output failed", str(exc))
 
+    def open_preview(self) -> None:
+        if not self.last_preview_path:
+            return
+        try:
+            subprocess.run(["open", str(self.last_preview_path)], check=False)
+        except Exception as exc:
+            messagebox.showerror("Open preview failed", str(exc))
+
     def show_preview(self, preview_path: Path) -> None:
         if not preview_path.exists():
             return
 
+        self.last_preview_path = preview_path
+        self.open_preview_button.configure(state=tk.NORMAL)
         image = Image.open(preview_path).convert("RGB")
         max_width = max(320, self.preview_label.winfo_width() - 24)
         max_height = 260
@@ -261,13 +296,29 @@ class AssetGridCutterApp(tk.Tk):
 
             if message == "__ENABLE_RUN__":
                 self.run_button.configure(state=tk.NORMAL)
+                if self.status_var.get() == "Running...":
+                    self.status_var.set("Ready")
             elif isinstance(message, tuple) and message[0] == "output_dir":
                 self.last_output_dir = Path(message[1])
                 self.open_output_button.configure(state=tk.NORMAL)
             elif isinstance(message, tuple) and message[0] == "preview":
                 self.show_preview(Path(message[1]))
-            else:
+            elif isinstance(message, tuple) and message[0] == "progress":
+                done = int(message[1])
+                total = max(1, int(message[2]))
+                self.progress_var.set(done / total * 100)
+                self.status_var.set(f"Processing {done}/{total}")
+            elif isinstance(message, tuple) and message[0] == "status":
+                self.status_var.set(str(message[1]))
+            elif message == "DONE":
+                self.progress_var.set(100)
+                self.status_var.set("Done")
                 self.log(str(message))
+            else:
+                text = str(message)
+                if text.startswith("ERROR "):
+                    self.status_var.set("Error")
+                self.log(text)
         self.after(100, self._drain_log_queue)
 
 

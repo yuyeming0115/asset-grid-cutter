@@ -31,7 +31,7 @@ Open the GUI:
 python3 asset_grid_cutter_gui.py
 ```
 
-The GUI lets you choose an input file/folder, adjust row and column counts, run the cut, inspect the generated preview, and open the output folder.
+The GUI lets you choose an input file/folder, adjust row and column counts, run the cut, watch progress, inspect the generated preview, open the full preview image, and open the output folder.
 
 On macOS, you can also double-click:
 
