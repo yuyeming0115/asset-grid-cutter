@@ -522,6 +522,7 @@ let currentFile = null;
 let outputFolder = "";
 let currentLang = localStorage.getItem("assetGridCutterLang") || "zh";
 let latestSummary = null;
+let localPreviewUrl = "";
 const $ = (id) => document.getElementById(id);
 const drop = $("drop");
 const fileInput = $("file");
@@ -545,6 +546,8 @@ const I18N = {
     "button.open": "Open Output",
     "summary.empty": "Waiting for image analysis",
     "summary.hint": "Grid results will appear here after dropping an image",
+    "summary.loading": "Analyzing image...",
+    "summary.local": "Original image preview shown while grid analysis runs",
     "summary.result": "{count} cells · {cols} columns x {rows} rows · {source}",
     "summary.output": "Output complete · {count} PNGs · {cols} columns x {rows} rows",
     "preview.empty": "Analysis preview and output preview will appear here.",
@@ -560,6 +563,7 @@ const I18N = {
     "status.cutting": "Cutting assets...",
     "status.cutFailed": "Cut failed",
     "status.output": "Output complete: {count} PNGs",
+    "error.network": "Request failed. Close old Asset Grid Cutter windows and reopen the command file.",
     "language": "中文"
   },
   zh: {
@@ -578,6 +582,8 @@ const I18N = {
     "button.open": "打开输出",
     "summary.empty": "等待图片分析",
     "summary.hint": "拖入图片后这里会显示网格结果",
+    "summary.loading": "正在分析图片...",
+    "summary.local": "网格分析期间先显示原图预览",
     "summary.result": "{count} 个格子 · {cols} 列 x {rows} 行 · {source}",
     "summary.output": "输出完成 · {count} 张 PNG · {cols} 列 x {rows} 行",
     "preview.empty": "分析预览和输出预览会显示在这里。",
@@ -593,6 +599,7 @@ const I18N = {
     "status.cutting": "正在切割素材...",
     "status.cutFailed": "切割失败",
     "status.output": "输出完成：{count} 张 PNG",
+    "error.network": "请求失败。请关闭旧的 Asset Grid Cutter 页面，再重新双击 command 文件。",
     "language": "English"
   }
 };
@@ -635,6 +642,13 @@ function showPreview(url, label) {
   $("previewWrap").innerHTML = `<img src="${url}?t=${Date.now()}" alt="${label}">`;
 }
 
+function showLocalPreview(file) {
+  if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+  localPreviewUrl = URL.createObjectURL(file);
+  $("previewWrap").className = "";
+  $("previewWrap").innerHTML = `<img src="${localPreviewUrl}" alt="local preview">`;
+}
+
 function updateMetrics(data) {
   latestSummary = { ...data, mode: data.mode || "analysis" };
   renderSummary();
@@ -648,6 +662,11 @@ function renderSummary() {
     $("summarySub").textContent = t("summary.hint");
     return;
   }
+  if (latestSummary.mode === "loading") {
+    $("summaryText").textContent = t("summary.loading");
+    $("summarySub").textContent = t("summary.local");
+    return;
+  }
   const key = latestSummary.mode === "output" ? "summary.output" : "summary.result";
   $("summaryText").textContent = t(key, latestSummary);
   $("summarySub").textContent = latestSummary.image_size
@@ -659,21 +678,30 @@ async function analyze() {
   if (!currentFile) return;
   status(t("status.analyzing"));
   log(t("log.upload", { name: currentFile.name }));
+  latestSummary = { mode: "loading" };
+  $("summaryText").textContent = t("summary.loading");
+  $("summarySub").textContent = t("summary.local");
   $("analyzeBtn").disabled = true;
   $("cutBtn").disabled = true;
-  const res = await fetch("/api/analyze", { method: "POST", body: formData() });
-  const data = await res.json();
-  $("analyzeBtn").disabled = false;
-  if (!data.ok) {
+  try {
+    const res = await fetch("/api/analyze", { method: "POST", body: formData() });
+    const data = await res.json();
+    if (!data.ok) {
+      status(t("status.analyzeFailed"));
+      log("ERROR " + data.error);
+      return;
+    }
+    updateMetrics(data);
+    showPreview(data.preview_url, "analysis preview");
+    $("cutBtn").disabled = false;
+    status(t("status.detected", data));
+    log(t("log.analysisOk", data));
+  } catch (error) {
     status(t("status.analyzeFailed"));
-    log("ERROR " + data.error);
-    return;
+    log("ERROR " + t("error.network") + "\n" + error);
+  } finally {
+    $("analyzeBtn").disabled = false;
   }
-  updateMetrics(data);
-  showPreview(data.preview_url, "analysis preview");
-  $("cutBtn").disabled = false;
-  status(t("status.detected", data));
-  log(t("log.analysisOk", data));
 }
 
 async function cut() {
@@ -681,20 +709,26 @@ async function cut() {
   status(t("status.cutting"));
   log(t("log.cut", { name: currentFile.name }));
   $("cutBtn").disabled = true;
-  const res = await fetch("/api/cut", { method: "POST", body: formData() });
-  const data = await res.json();
-  $("cutBtn").disabled = false;
-  if (!data.ok) {
+  try {
+    const res = await fetch("/api/cut", { method: "POST", body: formData() });
+    const data = await res.json();
+    if (!data.ok) {
+      status(t("status.cutFailed"));
+      log("ERROR " + data.error);
+      return;
+    }
+    outputFolder = data.output_dir;
+    updateMetrics({ ...data, mode: "output" });
+    if (data.preview_url) showPreview(data.preview_url, "output preview");
+    $("openBtn").disabled = false;
+    status(t("status.output", data));
+    log(t("log.outputOk", { ...data, folder: data.output_dir }));
+  } catch (error) {
     status(t("status.cutFailed"));
-    log("ERROR " + data.error);
-    return;
+    log("ERROR " + t("error.network") + "\n" + error);
+  } finally {
+    $("cutBtn").disabled = false;
   }
-  outputFolder = data.output_dir;
-  updateMetrics({ ...data, mode: "output" });
-  if (data.preview_url) showPreview(data.preview_url, "output preview");
-  $("openBtn").disabled = false;
-  status(t("status.output", data));
-  log(t("log.outputOk", { ...data, folder: data.output_dir }));
 }
 
 async function openOutput() {
@@ -708,6 +742,7 @@ function setFile(file) {
   outputFolder = "";
   latestSummary = null;
   renderSummary();
+  showLocalPreview(file);
   $("filePath").textContent = file.name + " (" + Math.round(file.size / 1024) + " KB)";
   $("analyzeBtn").disabled = false;
   $("cutBtn").disabled = true;
