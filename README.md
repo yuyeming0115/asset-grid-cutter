@@ -12,6 +12,8 @@ Asset Grid Cutter is a small local tool for slicing AI-generated asset sheets in
 - Trim blank background around each asset.
 - Optionally convert light background to transparent alpha.
 - Generate a preview contact sheet.
+- Show the latest preview directly in the GUI.
+- Open the output folder from the GUI after processing.
 - Write a `manifest.json` for every processed sheet.
 - Provide both GUI and command-line workflows.
 
@@ -28,6 +30,8 @@ Open the GUI:
 ```bash
 python3 asset_grid_cutter_gui.py
 ```
+
+The GUI lets you choose an input file/folder, adjust row and column counts, run the cut, inspect the generated preview, and open the output folder.
 
 On macOS, you can also double-click:
 
