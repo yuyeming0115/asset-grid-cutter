@@ -313,7 +313,7 @@ PAGE = r"""<!doctype html>
       margin-bottom: 18px;
     }
     h1 { margin: 0; font-size: 26px; }
-    .status { color: var(--muted); font-size: 14px; }
+    .status { display: none; }
     .layout {
       display: grid;
       grid-template-columns: 360px 1fr;
@@ -389,30 +389,8 @@ PAGE = r"""<!doctype html>
       gap: 10px;
       margin-top: 14px;
     }
-    .summary {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      background: #f9fafb;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
-      margin-bottom: 14px;
-    }
-    .summary-text {
-      font-weight: 750;
-      overflow-wrap: anywhere;
-    }
-    .summary-sub {
-      color: var(--muted);
-      font-size: 12px;
-    }
     .preview {
       min-height: 560px;
-      display: grid;
-      grid-template-rows: auto 1fr;
-      gap: 12px;
     }
     .preview img {
       width: 100%;
@@ -434,7 +412,6 @@ PAGE = r"""<!doctype html>
       padding: 18px;
     }
     .log {
-      white-space: pre-wrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
       background: #101828;
@@ -445,6 +422,19 @@ PAGE = r"""<!doctype html>
       margin-top: 14px;
       overflow: auto;
     }
+    .log-title {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+    .log-sub {
+      color: #98a2b3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .log-error { color: #fecaca; white-space: pre-wrap; }
     .path {
       overflow-wrap: anywhere;
       color: var(--muted);
@@ -453,7 +443,6 @@ PAGE = r"""<!doctype html>
     }
     @media (max-width: 880px) {
       .layout { grid-template-columns: 1fr; }
-      .summary { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -507,12 +496,6 @@ PAGE = r"""<!doctype html>
       <div class="log" id="log">Ready.</div>
     </section>
     <section class="panel preview">
-      <div class="summary">
-        <div>
-          <div class="summary-text" id="summaryText" data-i18n="summary.empty">等待图片分析</div>
-          <div class="summary-sub" id="summarySub" data-i18n="summary.hint">拖入图片后这里会显示网格结果</div>
-        </div>
-      </div>
       <div id="previewWrap" class="empty" data-i18n="preview.empty">Analysis preview and output preview will appear here.</div>
     </section>
   </div>
@@ -521,7 +504,7 @@ PAGE = r"""<!doctype html>
 let currentFile = null;
 let outputFolder = "";
 let currentLang = localStorage.getItem("assetGridCutterLang") || "zh";
-let latestSummary = null;
+let latestLogData = null;
 let localPreviewUrl = "";
 const $ = (id) => document.getElementById(id);
 const drop = $("drop");
@@ -544,15 +527,13 @@ const I18N = {
     "button.analyze": "Analyze",
     "button.cut": "Cut Assets",
     "button.open": "Open Output",
-    "summary.empty": "Waiting for image analysis",
-    "summary.hint": "Grid results will appear here after dropping an image",
-    "summary.loading": "Analyzing image...",
-    "summary.local": "Original image preview shown while grid analysis runs",
-    "summary.result": "{count} cells · {cols} columns x {rows} rows · {source}",
-    "summary.output": "Output complete · {count} PNGs · {cols} columns x {rows} rows",
     "preview.empty": "Analysis preview and output preview will appear here.",
     "log.ready": "Ready.",
     "log.upload": "Uploading and analyzing {name} ...",
+    "log.loadingTitle": "Analyzing image...",
+    "log.loadingSub": "Original image preview is shown while grid analysis runs",
+    "log.analysisTitle": "{count} cells · {cols} columns x {rows} rows · {source}",
+    "log.outputTitle": "Output complete · {count} PNGs · {cols} columns x {rows} rows",
     "log.analysisOk": "Analysis OK: {count} cells ({cols}x{rows}, {source})",
     "log.cut": "Cutting {name} ...",
     "log.outputOk": "Output OK: {count} PNGs ({cols}x{rows}, {source})\n{folder}",
@@ -580,15 +561,13 @@ const I18N = {
     "button.analyze": "重新分析",
     "button.cut": "切割素材",
     "button.open": "打开输出",
-    "summary.empty": "等待图片分析",
-    "summary.hint": "拖入图片后这里会显示网格结果",
-    "summary.loading": "正在分析图片...",
-    "summary.local": "网格分析期间先显示原图预览",
-    "summary.result": "{count} 个格子 · {cols} 列 x {rows} 行 · {source}",
-    "summary.output": "输出完成 · {count} 张 PNG · {cols} 列 x {rows} 行",
     "preview.empty": "分析预览和输出预览会显示在这里。",
     "log.ready": "就绪。",
     "log.upload": "正在上传并分析 {name} ...",
+    "log.loadingTitle": "正在分析图片...",
+    "log.loadingSub": "网格分析期间先显示原图预览",
+    "log.analysisTitle": "{count} 个格子 · {cols} 列 x {rows} 行 · {source}",
+    "log.outputTitle": "输出完成 · {count} 张 PNG · {cols} 列 x {rows} 行",
     "log.analysisOk": "分析完成：{count} 个格子（{cols}x{rows}，{source}）",
     "log.cut": "正在切割 {name} ...",
     "log.outputOk": "输出完成：{count} 张 PNG（{cols}x{rows}，{source}）\n{folder}",
@@ -618,7 +597,7 @@ function applyLanguage() {
     el.textContent = t(el.dataset.i18n);
   });
   $("langBtn").textContent = t("language");
-  renderSummary();
+  if (latestLogData) renderLogCard(latestLogData, latestLogData.mode);
   if ($("log").textContent === "Ready." || $("log").textContent === "就绪。") {
     log(t("log.ready"));
   }
@@ -650,37 +629,44 @@ function showLocalPreview(file) {
 }
 
 function updateMetrics(data) {
-  latestSummary = { ...data, mode: data.mode || "analysis" };
-  renderSummary();
   if (data.rows) $("rows").value = data.rows;
   if (data.cols) $("cols").value = data.cols;
 }
 
-function renderSummary() {
-  if (!latestSummary) {
-    $("summaryText").textContent = t("summary.empty");
-    $("summarySub").textContent = t("summary.hint");
-    return;
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[char]));
+}
+
+function renderLogCard(data, mode = "analysis") {
+  latestLogData = { ...data, mode };
+  let title = t("log.analysisTitle", data);
+  let sub = data.image_size ? `${data.image_size[0]} x ${data.image_size[1]}` : "";
+  if (mode === "loading") {
+    title = t("log.loadingTitle");
+    sub = t("log.loadingSub");
+  } else if (mode === "output") {
+    title = t("log.outputTitle", data);
+    sub = data.output_dir || "";
   }
-  if (latestSummary.mode === "loading") {
-    $("summaryText").textContent = t("summary.loading");
-    $("summarySub").textContent = t("summary.local");
-    return;
-  }
-  const key = latestSummary.mode === "output" ? "summary.output" : "summary.result";
-  $("summaryText").textContent = t(key, latestSummary);
-  $("summarySub").textContent = latestSummary.image_size
-    ? `${latestSummary.image_size[0]} x ${latestSummary.image_size[1]}`
-    : latestSummary.output_dir || "";
+  $("log").innerHTML = `<div class="log-title">${escapeHtml(title)}</div><div class="log-sub">${escapeHtml(sub)}</div>`;
+}
+
+function renderLogError(message) {
+  latestLogData = null;
+  $("log").innerHTML = `<div class="log-error">${escapeHtml(message)}</div>`;
 }
 
 async function analyze() {
   if (!currentFile) return;
   status(t("status.analyzing"));
   log(t("log.upload", { name: currentFile.name }));
-  latestSummary = { mode: "loading" };
-  $("summaryText").textContent = t("summary.loading");
-  $("summarySub").textContent = t("summary.local");
+  renderLogCard({}, "loading");
   $("analyzeBtn").disabled = true;
   $("cutBtn").disabled = true;
   try {
@@ -694,11 +680,11 @@ async function analyze() {
     updateMetrics(data);
     showPreview(data.preview_url, "analysis preview");
     $("cutBtn").disabled = false;
-    status(t("status.detected", data));
-    log(t("log.analysisOk", data));
+    status(t("status.ready"));
+    renderLogCard(data, "analysis");
   } catch (error) {
     status(t("status.analyzeFailed"));
-    log("ERROR " + t("error.network") + "\n" + error);
+    renderLogError("ERROR " + t("error.network") + "\n" + error);
   } finally {
     $("analyzeBtn").disabled = false;
   }
@@ -721,11 +707,11 @@ async function cut() {
     updateMetrics({ ...data, mode: "output" });
     if (data.preview_url) showPreview(data.preview_url, "output preview");
     $("openBtn").disabled = false;
-    status(t("status.output", data));
-    log(t("log.outputOk", { ...data, folder: data.output_dir }));
+    status(t("status.ready"));
+    renderLogCard(data, "output");
   } catch (error) {
     status(t("status.cutFailed"));
-    log("ERROR " + t("error.network") + "\n" + error);
+    renderLogError("ERROR " + t("error.network") + "\n" + error);
   } finally {
     $("cutBtn").disabled = false;
   }
@@ -740,8 +726,7 @@ async function openOutput() {
 function setFile(file) {
   currentFile = file;
   outputFolder = "";
-  latestSummary = null;
-  renderSummary();
+  latestLogData = null;
   showLocalPreview(file);
   $("filePath").textContent = file.name + " (" + Math.round(file.size / 1024) + " KB)";
   $("analyzeBtn").disabled = false;
