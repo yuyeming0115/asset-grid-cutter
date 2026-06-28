@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import queue
 import subprocess
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -16,11 +17,12 @@ from asset_grid_cutter import CutSettings, cut_image, ensure_output_dir, iter_im
 
 
 class AssetGridCutterApp(tk.Tk):
-    def __init__(self) -> None:
+    def __init__(self, initial_paths: list[str] | None = None) -> None:
         super().__init__()
         self.title("Asset Grid Cutter")
         self.geometry("900x760")
         self.minsize(760, 680)
+        self.configure(background="#f4f6f8")
 
         self.log_queue: queue.Queue[object] = queue.Queue()
         self.worker: threading.Thread | None = None
@@ -44,15 +46,45 @@ class AssetGridCutterApp(tk.Tk):
         self.status_var = tk.StringVar(value="Ready")
         self.progress_var = tk.DoubleVar(value=0)
 
+        self._configure_style()
         self._build_ui()
+        if initial_paths:
+            self.load_initial_paths(initial_paths)
         self.after(100, self._drain_log_queue)
+
+    def _configure_style(self) -> None:
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        bg = "#f4f6f8"
+        panel = "#ffffff"
+        text = "#1f2933"
+        muted = "#52606d"
+        border = "#cbd2d9"
+        accent = "#2563eb"
+
+        style.configure(".", background=bg, foreground=text, fieldbackground=panel)
+        style.configure("TFrame", background=bg)
+        style.configure("TLabel", background=bg, foreground=text)
+        style.configure("Title.TLabel", background=bg, foreground=text)
+        style.configure("TButton", background=panel, foreground=text, padding=(10, 5))
+        style.map("TButton", background=[("active", "#e4e7eb")], foreground=[("disabled", "#9aa5b1")])
+        style.configure("TEntry", fieldbackground=panel, foreground=text, insertcolor=text)
+        style.configure("TSpinbox", fieldbackground=panel, foreground=text, insertcolor=text)
+        style.configure("TCheckbutton", background=bg, foreground=text)
+        style.configure("TLabelframe", background=bg, bordercolor=border)
+        style.configure("TLabelframe.Label", background=bg, foreground=muted)
+        style.configure("Horizontal.TProgressbar", troughcolor="#e4e7eb", background=accent)
 
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=18)
         root.pack(fill=tk.BOTH, expand=True)
         root.columnconfigure(1, weight=1)
 
-        title = ttk.Label(root, text="Asset Grid Cutter", font=("TkDefaultFont", 18, "bold"))
+        title = ttk.Label(root, text="Asset Grid Cutter", font=("TkDefaultFont", 18, "bold"), style="Title.TLabel")
         title.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 14))
 
         ttk.Label(root, text="Input").grid(row=1, column=0, sticky="w", pady=6)
@@ -148,6 +180,14 @@ class AssetGridCutterApp(tk.Tk):
         log_frame.columnconfigure(0, weight=1)
 
         self.log_text = tk.Text(log_frame, height=12, wrap="word")
+        self.log_text.configure(
+            background="#ffffff",
+            foreground="#1f2933",
+            insertbackground="#1f2933",
+            relief=tk.SOLID,
+            borderwidth=1,
+            highlightthickness=0,
+        )
         self.log_text.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
@@ -173,6 +213,24 @@ class AssetGridCutterApp(tk.Tk):
         path = filedialog.askdirectory(title="Choose output folder")
         if path:
             self.output_var.set(path)
+
+    def load_initial_paths(self, paths: list[str]) -> None:
+        if not paths:
+            return
+
+        resolved = [str(Path(path).expanduser().resolve()) for path in paths]
+        if len(resolved) == 1:
+            self.input_var.set(resolved[0])
+            self.log(f"Loaded input: {resolved[0]}")
+            return
+
+        first_parent = Path(resolved[0]).parent
+        if all(Path(path).parent == first_parent for path in resolved):
+            self.input_var.set(str(first_parent))
+            self.log(f"Loaded folder from dropped files: {first_parent}")
+        else:
+            self.input_var.set(str(first_parent))
+            self.log("Loaded the first dropped file's folder. Put mixed-location files in one folder for batch mode.")
 
     def settings(self) -> CutSettings:
         return CutSettings(
@@ -323,7 +381,7 @@ class AssetGridCutterApp(tk.Tk):
 
 
 def main() -> int:
-    app = AssetGridCutterApp()
+    app = AssetGridCutterApp(sys.argv[1:])
     app.mainloop()
     return 0
 
