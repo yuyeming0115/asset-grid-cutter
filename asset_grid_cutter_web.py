@@ -381,6 +381,7 @@ PAGE = r"""<!doctype html>
     }
     button.secondary { background: #475467; }
     button.green { background: var(--accent2); }
+    button.language { background: #344054; min-width: 116px; }
     button:disabled { opacity: .45; cursor: not-allowed; }
     .actions {
       display: grid;
@@ -461,68 +462,158 @@ PAGE = r"""<!doctype html>
   <header>
     <div>
       <h1>Asset Grid Cutter</h1>
-      <div class="status" id="status">Drop an image to analyze its grid.</div>
+      <div class="status" id="status" data-i18n="status.ready">Drop an image to analyze its grid.</div>
     </div>
+    <button id="langBtn" class="language">中文</button>
   </header>
   <div class="layout">
     <section class="panel">
       <div class="drop" id="drop">
         <div>
-          <strong>Drag an image here</strong>
-          <small>or click to choose a PNG/JPG/WebP asset sheet</small>
+          <strong data-i18n="drop.title">Drag an image here</strong>
+          <small data-i18n="drop.subtitle">or click to choose a PNG/JPG/WebP asset sheet</small>
         </div>
       </div>
       <input id="file" type="file" accept="image/*" />
       <div class="grid2">
         <div>
-          <label for="rows">Rows fallback</label>
+          <label for="rows" data-i18n="form.rows">Grid rows</label>
           <input id="rows" type="number" min="1" value="6" />
         </div>
         <div>
-          <label for="cols">Columns fallback</label>
+          <label for="cols" data-i18n="form.cols">Grid columns</label>
           <input id="cols" type="number" min="1" value="12" />
         </div>
         <div>
-          <label for="padding">Padding</label>
+          <label for="padding" data-i18n="form.padding">Padding</label>
           <input id="padding" type="number" min="0" value="8" />
         </div>
         <div>
-          <label for="trimTolerance">Trim tolerance</label>
+          <label for="trimTolerance" data-i18n="form.trimTolerance">Trim tolerance</label>
           <input id="trimTolerance" type="number" min="0" max="255" value="14" />
         </div>
       </div>
       <div class="checks">
-        <label><input id="detectGrid" type="checkbox" checked /> Detect grid lines</label>
-        <label><input id="trim" type="checkbox" checked /> Trim blank background</label>
-        <label><input id="transparent" type="checkbox" /> Transparent background</label>
+        <label><input id="detectGrid" type="checkbox" checked /> <span data-i18n="form.detect">Detect grid lines</span></label>
+        <label><input id="trim" type="checkbox" checked /> <span data-i18n="form.trim">Trim blank background</span></label>
+        <label><input id="transparent" type="checkbox" /> <span data-i18n="form.transparent">Transparent background</span></label>
       </div>
       <div class="actions">
-        <button id="analyzeBtn" class="secondary" disabled>Analyze</button>
-        <button id="cutBtn" class="green" disabled>Cut Assets</button>
-        <button id="openBtn" class="secondary" disabled>Open Output</button>
+        <button id="analyzeBtn" class="secondary" disabled data-i18n="button.analyze">Analyze</button>
+        <button id="cutBtn" class="green" disabled data-i18n="button.cut">Cut Assets</button>
+        <button id="openBtn" class="secondary" disabled data-i18n="button.open">Open Output</button>
       </div>
       <div class="path" id="filePath"></div>
       <div class="log" id="log">Ready.</div>
     </section>
     <section class="panel preview">
       <div class="meta">
-        <div class="metric"><span>Rows</span><strong id="mRows">-</strong></div>
-        <div class="metric"><span>Columns</span><strong id="mCols">-</strong></div>
-        <div class="metric"><span>Cells</span><strong id="mCells">-</strong></div>
-        <div class="metric"><span>Source</span><strong id="mSource">-</strong></div>
+        <div class="metric"><span data-i18n="metric.rows">Rows</span><strong id="mRows">-</strong></div>
+        <div class="metric"><span data-i18n="metric.cols">Columns</span><strong id="mCols">-</strong></div>
+        <div class="metric"><span data-i18n="metric.cells">Cells</span><strong id="mCells">-</strong></div>
+        <div class="metric"><span data-i18n="metric.source">Source</span><strong id="mSource">-</strong></div>
       </div>
-      <div id="previewWrap" class="empty">Analysis preview and output preview will appear here.</div>
+      <div id="previewWrap" class="empty" data-i18n="preview.empty">Analysis preview and output preview will appear here.</div>
     </section>
   </div>
 </main>
 <script>
 let currentFile = null;
 let outputFolder = "";
+let currentLang = localStorage.getItem("assetGridCutterLang") || "en";
 const $ = (id) => document.getElementById(id);
 const drop = $("drop");
 const fileInput = $("file");
 const log = (message) => { $("log").textContent = message; };
-const status = (message) => { $("status").textContent = message; };
+const status = (message) => { $("status").textContent = message; $("status").removeAttribute("data-i18n"); };
+
+const I18N = {
+  en: {
+    "status.ready": "Drop an image to analyze its grid.",
+    "drop.title": "Drag an image here",
+    "drop.subtitle": "or click to choose a PNG/JPG/WebP asset sheet",
+    "form.rows": "Grid rows",
+    "form.cols": "Grid columns",
+    "form.padding": "Padding",
+    "form.trimTolerance": "Trim tolerance",
+    "form.detect": "Detect grid lines",
+    "form.trim": "Trim blank background",
+    "form.transparent": "Transparent background",
+    "button.analyze": "Analyze",
+    "button.cut": "Cut Assets",
+    "button.open": "Open Output",
+    "metric.rows": "Rows",
+    "metric.cols": "Columns",
+    "metric.cells": "Cells",
+    "metric.source": "Source",
+    "preview.empty": "Analysis preview and output preview will appear here.",
+    "log.ready": "Ready.",
+    "log.upload": "Uploading and analyzing {name} ...",
+    "log.analysisOk": "Analysis OK: {count} cells ({cols}x{rows}, {source})",
+    "log.cut": "Cutting {name} ...",
+    "log.outputOk": "Output OK: {count} PNGs ({cols}x{rows}, {source})\n{folder}",
+    "status.analyzing": "Analyzing grid...",
+    "status.analyzeFailed": "Analyze failed",
+    "status.detected": "Detected {cols} x {rows} grid",
+    "status.loaded": "Image loaded. Analyzing automatically...",
+    "status.cutting": "Cutting assets...",
+    "status.cutFailed": "Cut failed",
+    "status.output": "Output complete: {count} PNGs",
+    "language": "中文"
+  },
+  zh: {
+    "status.ready": "拖入图片后会自动分析网格。",
+    "drop.title": "把图片拖到这里",
+    "drop.subtitle": "或点击选择 PNG/JPG/WebP 素材表",
+    "form.rows": "网格行数",
+    "form.cols": "网格列数",
+    "form.padding": "留白边距",
+    "form.trimTolerance": "裁边容差",
+    "form.detect": "检测网格线",
+    "form.trim": "裁掉空白背景",
+    "form.transparent": "透明背景",
+    "button.analyze": "重新分析",
+    "button.cut": "切割素材",
+    "button.open": "打开输出",
+    "metric.rows": "行数",
+    "metric.cols": "列数",
+    "metric.cells": "格子数",
+    "metric.source": "来源",
+    "preview.empty": "分析预览和输出预览会显示在这里。",
+    "log.ready": "就绪。",
+    "log.upload": "正在上传并分析 {name} ...",
+    "log.analysisOk": "分析完成：{count} 个格子（{cols}x{rows}，{source}）",
+    "log.cut": "正在切割 {name} ...",
+    "log.outputOk": "输出完成：{count} 张 PNG（{cols}x{rows}，{source}）\n{folder}",
+    "status.analyzing": "正在分析网格...",
+    "status.analyzeFailed": "分析失败",
+    "status.detected": "检测到 {cols} x {rows} 网格",
+    "status.loaded": "图片已载入，正在自动分析...",
+    "status.cutting": "正在切割素材...",
+    "status.cutFailed": "切割失败",
+    "status.output": "输出完成：{count} 张 PNG",
+    "language": "English"
+  }
+};
+
+function t(key, vars = {}) {
+  let text = I18N[currentLang][key] || I18N.en[key] || key;
+  for (const [name, value] of Object.entries(vars)) {
+    text = text.replaceAll(`{${name}}`, value);
+  }
+  return text;
+}
+
+function applyLanguage() {
+  document.documentElement.lang = currentLang === "zh" ? "zh-CN" : "en";
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  $("langBtn").textContent = t("language");
+  if ($("log").textContent === "Ready." || $("log").textContent === "就绪。") {
+    log(t("log.ready"));
+  }
+}
 
 function formData() {
   const data = new FormData();
@@ -547,39 +638,41 @@ function updateMetrics(data) {
   $("mCols").textContent = data.cols ?? "-";
   $("mCells").textContent = data.count ?? "-";
   $("mSource").textContent = data.source ?? "-";
+  if (data.rows) $("rows").value = data.rows;
+  if (data.cols) $("cols").value = data.cols;
 }
 
 async function analyze() {
   if (!currentFile) return;
-  status("Analyzing grid...");
-  log("Uploading and analyzing " + currentFile.name + " ...");
+  status(t("status.analyzing"));
+  log(t("log.upload", { name: currentFile.name }));
   $("analyzeBtn").disabled = true;
   $("cutBtn").disabled = true;
   const res = await fetch("/api/analyze", { method: "POST", body: formData() });
   const data = await res.json();
   $("analyzeBtn").disabled = false;
   if (!data.ok) {
-    status("Analyze failed");
+    status(t("status.analyzeFailed"));
     log("ERROR " + data.error);
     return;
   }
   updateMetrics(data);
   showPreview(data.preview_url, "analysis preview");
   $("cutBtn").disabled = false;
-  status(`Detected ${data.cols} x ${data.rows} grid`);
-  log(`Analysis OK: ${data.count} cells (${data.cols}x${data.rows}, ${data.source})`);
+  status(t("status.detected", data));
+  log(t("log.analysisOk", data));
 }
 
 async function cut() {
   if (!currentFile) return;
-  status("Cutting assets...");
-  log("Cutting " + currentFile.name + " ...");
+  status(t("status.cutting"));
+  log(t("log.cut", { name: currentFile.name }));
   $("cutBtn").disabled = true;
   const res = await fetch("/api/cut", { method: "POST", body: formData() });
   const data = await res.json();
   $("cutBtn").disabled = false;
   if (!data.ok) {
-    status("Cut failed");
+    status(t("status.cutFailed"));
     log("ERROR " + data.error);
     return;
   }
@@ -587,8 +680,8 @@ async function cut() {
   updateMetrics(data);
   if (data.preview_url) showPreview(data.preview_url, "output preview");
   $("openBtn").disabled = false;
-  status(`Output complete: ${data.count} PNGs`);
-  log(`Output OK: ${data.count} PNGs (${data.cols}x${data.rows}, ${data.source})\n${data.output_dir}`);
+  status(t("status.output", data));
+  log(t("log.outputOk", { ...data, folder: data.output_dir }));
 }
 
 async function openOutput() {
@@ -604,7 +697,7 @@ function setFile(file) {
   $("analyzeBtn").disabled = false;
   $("cutBtn").disabled = true;
   $("openBtn").disabled = true;
-  status("Image loaded. Analyzing automatically...");
+  status(t("status.loaded"));
   analyze();
 }
 
@@ -631,6 +724,12 @@ drop.addEventListener("drop", (event) => {
 $("analyzeBtn").addEventListener("click", analyze);
 $("cutBtn").addEventListener("click", cut);
 $("openBtn").addEventListener("click", openOutput);
+$("langBtn").addEventListener("click", () => {
+  currentLang = currentLang === "en" ? "zh" : "en";
+  localStorage.setItem("assetGridCutterLang", currentLang);
+  applyLanguage();
+});
+applyLanguage();
 </script>
 </body>
 </html>
