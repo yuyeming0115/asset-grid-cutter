@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Image Upscale"
+  short_description: "Batch upscale image folders while preserving structure."
+  default_prompt: "Upscale the images in this folder while preserving its directory structure."

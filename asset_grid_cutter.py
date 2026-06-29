@@ -32,6 +32,8 @@ class CutSettings:
     transparent_softness: int
     preview: bool
     line_fraction: float
+    folder_per_asset: bool = True
+    short_names: bool = True
 
 
 @dataclass
@@ -196,6 +198,82 @@ def detect_grid(
     )
 
 
+def merge_close_groups(groups: list[tuple[int, int]], max_gap: int) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in groups:
+        if merged and start - merged[-1][1] <= max_gap:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def detect_content_bands(mask: np.ndarray, axis: int) -> list[tuple[int, int]]:
+    length = mask.shape[1] if axis == 0 else mask.shape[0]
+    perp = mask.shape[0] if axis == 0 else mask.shape[1]
+    profile = mask.sum(axis=0 if axis == 0 else 1)
+
+    if profile.max() <= 0:
+        return []
+
+    threshold = max(2, min(float(profile.max()) * 0.18, perp * 0.03))
+    groups = group_indices(np.where(profile >= threshold)[0])
+    groups = merge_close_groups(groups, max(6, int(length * 0.025)))
+
+    min_width = max(8, int(length * 0.04))
+    return [group for group in groups if group[1] - group[0] + 1 >= min_width]
+
+
+def bounds_from_bands(groups: list[tuple[int, int]], length: int) -> list[int]:
+    centers = [(start + end) / 2 for start, end in groups]
+    bounds = [0]
+    for left, right in zip(centers, centers[1:]):
+        bounds.append(round((left + right) / 2))
+    bounds.append(length)
+    return bounds
+
+
+def detect_content_grid(image: Image.Image, rows: int | None = None, cols: int | None = None) -> GridResult | None:
+    rgba = image.convert("RGBA")
+    arr = np.array(rgba)
+    rgb = arr[:, :, :3].astype(np.int16)
+    alpha = arr[:, :, 3]
+    height, width = rgb.shape[:2]
+
+    bg = background_color(rgba)
+    distance = np.abs(rgb - bg.astype(np.int16)).max(axis=2)
+    mask = (alpha > 16) & (distance > 24)
+
+    x_groups = detect_content_bands(mask, axis=0)
+    y_groups = detect_content_bands(mask, axis=1)
+    detected_cols = len(x_groups)
+    detected_rows = len(y_groups)
+
+    if detected_cols < 1 or detected_rows < 1 or detected_cols * detected_rows <= 1:
+        return None
+    if cols and detected_cols != cols:
+        return None
+    if rows and detected_rows != rows:
+        return None
+
+    x_bounds = bounds_from_bands(x_groups, width)
+    y_bounds = bounds_from_bands(y_groups, height)
+    boxes = [
+        (x_bounds[col], y_bounds[row], x_bounds[col + 1], y_bounds[row + 1])
+        for row in range(detected_rows)
+        for col in range(detected_cols)
+    ]
+
+    return GridResult(
+        rows=detected_rows,
+        cols=detected_cols,
+        source="content",
+        boxes=boxes,
+        x_lines=x_groups,
+        y_lines=y_groups,
+    )
+
+
 def fixed_grid(image: Image.Image, rows: int, cols: int) -> GridResult:
     width, height = image.size
     x_bounds = [round(i * width / cols) for i in range(cols + 1)]
@@ -213,6 +291,13 @@ def choose_grid(image: Image.Image, settings: CutSettings) -> GridResult:
         detected = detect_grid(image, settings.rows, settings.cols, settings.line_fraction)
         if detected:
             return detected
+        detected = detect_content_grid(image, settings.rows, settings.cols)
+        if detected:
+            return detected
+        if settings.rows or settings.cols:
+            detected = detect_content_grid(image)
+            if detected:
+                return detected
 
     if not settings.rows or not settings.cols:
         raise ValueError("Could not detect grid. Re-run with --rows and --cols.")
@@ -275,8 +360,13 @@ def make_background_transparent(image: Image.Image, tolerance: int, softness: in
 
 def ensure_output_dir(input_path: Path, output: Path | None, multiple_inputs: bool) -> Path:
     if output:
-        return output / safe_stem(input_path) if multiple_inputs else output
-    return input_path.with_name(f"{safe_stem(input_path)}_slices")
+        return output / f"{safe_stem(input_path)}_cut" if multiple_inputs else output
+    return input_path.with_name(f"{safe_stem(input_path)}_cut")
+
+
+def asset_id(index: int, total: int) -> str:
+    width = max(2, len(str(total)))
+    return f"{index:0{width}d}"
 
 
 def create_preview(image_paths: list[Path], output_path: Path, thumb_size: int = 128) -> None:
@@ -293,8 +383,7 @@ def create_preview(image_paths: list[Path], output_path: Path, thumb_size: int =
         y = (thumb_size - img.height) // 2
         tile.alpha_composite(img, (x, y))
         thumbs.append(tile.convert("RGB"))
-        label_match = re.search(r"(r\d{2}_c\d{2})$", path.stem)
-        labels.append(label_match.group(1) if label_match else path.stem[-12:])
+        labels.append(path.stem)
 
     cols = min(12, max(1, math.ceil(math.sqrt(len(thumbs)))))
     rows = math.ceil(len(thumbs) / cols)
@@ -327,7 +416,9 @@ def cut_image(input_path: Path, output_dir: Path, settings: CutSettings) -> dict
     output_dir.mkdir(parents=True, exist_ok=True)
 
     written: list[Path] = []
+    items: list[dict[str, object]] = []
     stem = safe_stem(input_path)
+    total = len(grid.boxes)
 
     for index, box in enumerate(grid.boxes, start=1):
         row = (index - 1) // grid.cols + 1
@@ -343,19 +434,35 @@ def cut_image(input_path: Path, output_dir: Path, settings: CutSettings) -> dict
                 settings.transparent_softness,
             )
 
-        out_name = f"{stem}_r{row:02d}_c{col:02d}.png"
-        out_path = output_dir / out_name
+        short_id = asset_id(index, total)
+        out_name = f"{short_id}.png" if settings.short_names else f"{stem}_r{row:02d}_c{col:02d}.png"
+        if settings.folder_per_asset:
+            out_path = output_dir / short_id / out_name
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            out_path = output_dir / out_name
         cell.save(out_path)
         written.append(out_path)
+        items.append(
+            {
+                "id": short_id,
+                "row": row,
+                "col": col,
+                "box": box,
+                "file": out_path.relative_to(output_dir).as_posix(),
+            }
+        )
 
     preview_path = None
     if settings.preview:
-        preview_path = output_dir / f"{stem}_preview.png"
+        preview_path = output_dir / "preview.png"
         create_preview(written, preview_path)
 
     manifest = {
         "input": str(input_path),
         "output_dir": str(output_dir),
+        "layout": "folders" if settings.folder_per_asset else "flat",
+        "upscale_output_hint": f"{output_dir.name}_upscaled",
         "grid": {
             "rows": grid.rows,
             "cols": grid.cols,
@@ -365,10 +472,90 @@ def cut_image(input_path: Path, output_dir: Path, settings: CutSettings) -> dict
         },
         "count": len(written),
         "settings": asdict(settings),
-        "files": [p.name for p in written],
+        "items": items,
+        "files": [p.relative_to(output_dir).as_posix() for p in written],
         "preview": preview_path.name if preview_path else None,
     }
     (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def default_upscale_dir(input_dir: Path) -> Path:
+    suffix = "_upscaled"
+    name = input_dir.name
+    if name.endswith(suffix):
+        return input_dir.with_name(f"{name}_next")
+    return input_dir.with_name(f"{name}{suffix}")
+
+
+def images_for_upscale(input_dir: Path) -> list[Path]:
+    manifest_path = input_dir / "manifest.json"
+    if manifest_path.exists():
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = [
+            input_dir / rel_path
+            for rel_path in data.get("files", [])
+            if (input_dir / rel_path).suffix.lower() in IMAGE_EXTENSIONS
+        ]
+        files = [path for path in files if path.exists()]
+        if files:
+            return files
+
+    return sorted(
+        path
+        for path in input_dir.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in IMAGE_EXTENSIONS
+        and path.name.lower() != "preview.png"
+    )
+
+
+def upscale_folder(input_dir: Path, output_dir: Path | None = None, scale: int = 2, preview: bool = True) -> dict:
+    input_dir = input_dir.resolve()
+    if not input_dir.is_dir():
+        raise ValueError(f"Input folder does not exist: {input_dir}")
+
+    scale = max(1, int(scale))
+    output_dir = (output_dir or default_upscale_dir(input_dir)).resolve()
+    if output_dir == input_dir:
+        raise ValueError("Upscale output folder must be different from input folder.")
+
+    images = images_for_upscale(input_dir)
+    if not images:
+        raise ValueError(f"No supported images found in {input_dir}")
+
+    written: list[Path] = []
+    for image_path in images:
+        rel_path = image_path.relative_to(input_dir)
+        out_path = output_dir / rel_path
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(image_path) as image:
+            upscaled = image.resize(
+                (image.width * scale, image.height * scale),
+                Image.Resampling.LANCZOS,
+            )
+            upscaled.save(out_path)
+        written.append(out_path)
+
+    preview_path = None
+    if preview:
+        preview_path = output_dir / "preview.png"
+        create_preview(written, preview_path)
+
+    manifest = {
+        "input_dir": str(input_dir),
+        "output_dir": str(output_dir),
+        "scale": scale,
+        "method": "Pillow LANCZOS",
+        "count": len(written),
+        "files": [path.relative_to(output_dir).as_posix() for path in written],
+        "preview": preview_path.name if preview_path else None,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "upscale_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -391,6 +578,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--rows", type=positive_int, help="Expected row count.")
     parser.add_argument("--cols", type=positive_int, help="Expected column count.")
     parser.add_argument("--recursive", action="store_true", help="Process folders recursively.")
+    parser.add_argument(
+        "--upscale",
+        action="store_true",
+        help="Upscale an existing cut folder while preserving its folder structure.",
+    )
+    parser.add_argument("--scale", type=positive_int, default=2, help="Upscale factor used with --upscale.")
     parser.add_argument(
         "--no-detect-grid",
         action="store_true",
@@ -423,6 +616,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--preview", action="store_true", help="Create a contact-sheet preview.")
     parser.add_argument(
+        "--flat-output",
+        action="store_true",
+        help="Write all PNGs directly into the output folder instead of one folder per asset.",
+    )
+    parser.add_argument(
+        "--long-names",
+        action="store_true",
+        help="Use source-based row/column filenames instead of short numeric names.",
+    )
+    parser.add_argument(
         "--line-fraction",
         type=float,
         default=0.55,
@@ -435,6 +638,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     input_path = args.input.expanduser().resolve()
     output = args.output.expanduser().resolve() if args.output else None
+
+    if args.upscale:
+        try:
+            manifest = upscale_folder(input_path, output, args.scale)
+            print(
+                f"OK upscaled {manifest['count']} PNGs "
+                f"({manifest['scale']}x) -> {manifest['output_dir']}"
+            )
+            return 0
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
 
     if args.no_detect_grid and (not args.rows or not args.cols):
         print("--no-detect-grid requires --rows and --cols.", file=sys.stderr)
@@ -452,6 +667,8 @@ def main(argv: list[str] | None = None) -> int:
         transparent_softness=max(0, args.transparent_softness),
         preview=args.preview,
         line_fraction=max(0.01, min(1.0, args.line_fraction)),
+        folder_per_asset=not args.flat_output,
+        short_names=not args.long_names,
     )
 
     try:
